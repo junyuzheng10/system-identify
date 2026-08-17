@@ -1,0 +1,82 @@
+# ============================================================================
+# Per-joint per-quantity regularization weights for system identification
+# ============================================================================
+# Used by experiments/identify_params.py via --reg_config.
+#
+# For each joint you can set a separate regularization weight for:
+#   - mass:     link mass (1 param)
+#   - com:      first moments of mass m*com (3 params, same weight)
+#   - inertia:  inertia tensor (6 params, same weight)
+#   - coulomb:  Coulomb friction (applied to Fc+ and Fc- in asymmetric model)
+#   - viscous:  viscous friction  (applied to Fv+ and Fv- in asymmetric model)
+#   - armature: rotor inertia reflected to the joint (1 param)
+#
+# Resolution priority for a given parameter:
+#   1. explicit value in the joint entry
+#   2. `default` value below
+#   3. --lambda_reg CLI argument (fallback when file/field is missing)
+#
+# The parameter vector layout is:
+#   [inertia(10*nj) | friction | armature(nj)]
+# where inertia is joint-major (10 params per joint) and friction is grouped by
+# feature (coulomb block, then viscous block; for asymmetric: Fc+, Fv+, Fc-, Fv-).
+# ============================================================================
+
+regularization:
+  default: 100.0
+  joints:
+    - joint: 1
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 2
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 3
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 4
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 5
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 6
+      mass: 5.0
+      com: 5.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
+
+    - joint: 7
+      mass: 3.0
+      com: 3.0
+      inertia: 10.0
+      coulomb: 0.001
+      viscous: 0.001
+      armature: 0.001
