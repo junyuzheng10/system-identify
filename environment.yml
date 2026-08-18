@@ -16,9 +16,13 @@ dependencies:
   - pinocchio=4.1.0
   # plotting
   - matplotlib>=3.5
+  # data
+  - pandas>=1.4
   # logging & utils
   - loguru>=0.5
   - pyyaml>=6.0
   # pip: 以可编辑模式安装本项目（自动拉取 setup.py 里的 install_requires）
+  # meshcat: 3D 可视化（用于回放激励轨迹），PyPI 包，conda-forge 上较旧
   - pip:
+    - meshcat
     - -e .
