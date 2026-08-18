@@ -156,8 +156,11 @@ def main():
     print(f"[info] 渲染 {n_render} 帧（原始 {len(t)} 帧降采样）")
 
     # 回放：睡眠时间 = 目标间隔 - display 耗时（不小于 0）
+    # 期望总时间 = 最后一帧时间戳 - 第一帧时间戳
+    expected_total = t[render_indices[-1]] - t[render_indices[0]]
     try:
         while True:
+            t_round_start = time.perf_counter()
             for k, i in enumerate(render_indices):
                 t_disp_start = time.perf_counter()
                 viz.display(q[i])
@@ -167,9 +170,17 @@ def main():
                 sleep_time = max(0.0, dt_render - disp_cost)
                 if k < n_render - 1:
                     time.sleep(sleep_time)
+            t_round_end = time.perf_counter()
+            actual_total = t_round_end - t_round_start
+            drift = actual_total - expected_total
+            print(
+                f"[info] 本轮回放完成: 实际 {actual_total:.3f}s / 期望 {expected_total:.3f}s"
+                f" / 偏差 {drift*1000:+.1f}ms ({drift/expected_total*100:+.2f}%)"
+            )
             if not args.loop:
                 break
-            print("[info] 回放结束，重新开始...")
+            print("[info] 回放结束，5 秒后重新开始...")
+            time.sleep(5.0)
     except KeyboardInterrupt:
         print("\n[info] 已退出")
 
