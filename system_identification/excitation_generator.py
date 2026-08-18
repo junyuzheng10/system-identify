@@ -159,7 +159,7 @@ def obtain_bounded_fourier_traj(params, fourier_config, robot_config, fps=10):
     # tanh mapping for all joints at once
     q_center = 0.5 * (lower_limits + upper_limits)   # (njoints,)
     half_range = 0.5 * (upper_limits - lower_limits)  # (njoints,)
-    q_range = half_range * 0.95                       # (njoints,)
+    q_range = half_range * 0.85                       # (njoints,)
 
     th = np.tanh(raw)           # (n_time, njoints)
     sech2 = 1.0 - th ** 2       # (n_time, njoints)
