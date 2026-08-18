@@ -56,14 +56,20 @@ def build_visualizer(robot_name):
     urdf_path = find_path(f"{robot_name}.urdf", "./robot_description")
     package_root = Path("./robot_description").resolve()
 
-    # 创建临时目录，建立 kuavo_assets/models/biped_s49 -> biped_s49_description 的符号链接
-    # 这样 pinocchio 解析 package://kuavo_assets/models/biped_s49/meshes/xxx.STL 时
-    # 会找到 tmpdir/kuavo_assets/models/biped_s49/meshes/xxx.STL
-    # -> 实际指向 robot_description/biped_s49_description/meshes/xxx.STL
+    # 创建临时目录，建立 URDF package:// 路径的符号链接。
+    # 支持多种机器人：
+    #   biped_s49: package://kuavo_assets/models/biped_s49/... -> biped_s49_description
+    #   ar5:       package://ar5_tutorial/...                  -> ar5_tutorial
     tmpdir = Path(tempfile.mkdtemp(prefix="pinocchio_pkg_"))
-    kuavo_dir = tmpdir / "kuavo_assets" / "models" / "biped_s49"
-    kuavo_dir.parent.mkdir(parents=True, exist_ok=True)
-    kuavo_dir.symlink_to(package_root / "biped_s49_description")
+    package_links = {
+        "kuavo_assets/models/biped_s49": package_root / "biped_s49_description",
+        "ar5_tutorial": package_root / "ar5_tutorial",
+    }
+    for pkg_path, target in package_links.items():
+        link = tmpdir / pkg_path
+        if target.exists() and not link.exists():
+            link.parent.mkdir(parents=True, exist_ok=True)
+            link.symlink_to(target)
 
     model, collision_model, visual_model = pin.buildModelsFromUrdf(
         urdf_path, package_dirs=[str(tmpdir)]
@@ -100,7 +106,7 @@ def main():
     parser.add_argument(
         "--robot",
         type=str,
-        default="biped_s49_left_arm",
+        default="ar5_leftArm",
         help="机器人名（对应 robot_description 下的 URDF）",
     )
     parser.add_argument(

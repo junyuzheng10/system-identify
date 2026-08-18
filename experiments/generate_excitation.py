@@ -41,7 +41,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Simulator")
     parser.add_argument("--excite_type", type=str, default="condFriction")
-    parser.add_argument("--robot", type=str, default="biped_s49_left_arm")
+    parser.add_argument("--robot", type=str, default="ar5_leftArm")
     parser.add_argument("--optimizer", type=str, default="trust-constr") # SLSQP, trust-constr
     parser.add_argument("--fourier_order", type=int, default=8)
     parser.add_argument("--fourier_duration", type=int, default=40)
