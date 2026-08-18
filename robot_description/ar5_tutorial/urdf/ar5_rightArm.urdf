@@ -98,7 +98,7 @@
   <joint name="AR5-5_07L-W4C4A2_joint_1" type="fixed">
     <parent link="AR5-5_07L-W4C4A2_base"/>
     <child link="AR5-5_07L-W4C4A2_link1"/>
-    <limit effort="108" lower="-3.1067" upper="3.1067" velocity="3.0543261909900763"/>
+    <limit effort="108" lower="-3.1067" upper="3.1067" velocity="2.0543261909900763"/>
     <axis xyz="0 0 1"/>
     <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
   </joint>
@@ -136,7 +136,7 @@
   <joint name="AR5-5_07L-W4C4A2_joint_2" type="fixed">
     <parent link="AR5-5_07L-W4C4A2_link1"/>
     <child link="AR5-5_07L-W4C4A2_link2"/>
-    <limit effort="108" lower="-2.0944" upper="2.0944" velocity="3.0543261909900763"/>
+    <limit effort="108" lower="-2.0944" upper="2.0944" velocity="2.0543261909900763"/>
     <axis xyz="0 1 0"/>
     <origin rpy="0 1.57 0" xyz="0.0 0.0 0.1745"/>
   </joint>
@@ -174,7 +174,7 @@
   <joint name="AR5-5_07L-W4C4A2_joint_3" type="fixed">
     <parent link="AR5-5_07L-W4C4A2_link2"/>
     <child link="AR5-5_07L-W4C4A2_link3"/>
-    <limit effort="66" lower="-3.1067" upper="3.1067" velocity="4.71238898038469"/>
+    <limit effort="66" lower="-3.1067" upper="3.1067" velocity="2.01238898038469"/>
     <axis xyz="0 0 1"/>
     <origin rpy="0 0 0" xyz="0.0 0.0 0.314"/>
   </joint>
@@ -212,7 +212,7 @@
   <joint name="AR5-5_07L-W4C4A2_joint_4" type="fixed">
     <parent link="AR5-5_07L-W4C4A2_link3"/>
     <child link="AR5-5_07L-W4C4A2_link4"/>
-    <limit effort="66" lower="-1.0472" upper="2.5307" velocity="5.235987755982989"/>
+    <limit effort="66" lower="-1.0472" upper="2.5307" velocity="2.01238898038469"/>
     <!--     lower="-1.0472" upper="1.0472" -->
     <axis xyz="0 1 0"/>
     <!--     <origin rpy="0 0 0" xyz=0.01 0.0 0.0/> -->
@@ -394,7 +394,7 @@
   <joint name="AR5-5_07R-W4C4A2_joint_1" type="revolute">
     <parent link="AR5-5_07R-W4C4A2_base"/>
     <child link="AR5-5_07R-W4C4A2_link1"/>
-    <limit effort="108" lower="0.0" upper="3.1067" velocity="3.0543261909900763"/>
+    <limit effort="108" lower="0.0" upper="3.1067" velocity="2.0543261909900763"/>
     <axis xyz="0 0 1"/>
     <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
   </joint>
@@ -432,7 +432,7 @@
   <joint name="AR5-5_07R-W4C4A2_joint_2" type="revolute">
     <parent link="AR5-5_07R-W4C4A2_link1"/>
     <child link="AR5-5_07R-W4C4A2_link2"/>
-    <limit effort="108" lower="-2.0944" upper="0.0" velocity="3.0543261909900763"/>
+    <limit effort="108" lower="-2.0944" upper="0.0" velocity="2.0543261909900763"/>
     <axis xyz="0 1 0"/>
     <origin rpy="0 1.57 0" xyz="0.0 0.0 0.1745"/>
   </joint>
@@ -470,7 +470,7 @@
   <joint name="AR5-5_07R-W4C4A2_joint_3" type="revolute">
     <parent link="AR5-5_07R-W4C4A2_link2"/>
     <child link="AR5-5_07R-W4C4A2_link3"/>
-    <limit effort="66" lower="1.1838" upper="3.1067" velocity="4.71238898038469"/>
+    <limit effort="66" lower="1.1838" upper="3.1067" velocity="2.01238898038469"/>
     <axis xyz="0 0 1"/>
     <origin rpy="0 0 0" xyz="0.0 0.0 0.314"/>
   </joint>
@@ -508,7 +508,7 @@
   <joint name="AR5-5_07R-W4C4A2_joint_4" type="revolute">
     <parent link="AR5-5_07R-W4C4A2_link3"/>
     <child link="AR5-5_07R-W4C4A2_link4"/>
-    <limit effort="66" lower="0.0" upper="2.1" velocity="5.235987755982989"/>
+    <limit effort="66" lower="0.0" upper="2.1" velocity="2.035987755982989"/>
     <!--     lower="-1.0472" upper="1.0472" -->
     <axis xyz="0 1 0"/>
     <!--     <origin rpy="0 0 0" xyz=0.01 0.0 0.0/> -->
