@@ -614,7 +614,7 @@
     <parent link="zarm_r2_link" />
     <child link="zarm_r3_link" />
     <axis xyz="0 0 1" />
-    <limit lower="1.3707963267949" upper="-0.387" effort="57.0" velocity="2.0" />
+    <limit lower="-1.3707963267949" upper="0.387" effort="57.0" velocity="2.0" />
     <dynamics damping="0.02" friction="0.02" />
   </joint>
   <link name="zarm_r4_link">

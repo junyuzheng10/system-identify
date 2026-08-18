@@ -3,6 +3,7 @@ import numpy as np
 import scipy
 from copy import copy
 from scipy.signal import savgol_filter, savgol_coeffs
+from loguru import logger
 
 
 def find_path(name, path):
@@ -104,6 +105,14 @@ def pin_joint_config(robot_name):
         else:
             upper_pos_limit = model.upperPositionLimit[joint_idx]
             lower_pos_limit = model.lowerPositionLimit[joint_idx]
+            # URDF 中某些关节的 lower/upper 标签可能写反（lower > upper），
+            # 此时报警告并交换两者，保证 lower <= upper，否则 is_traj_valid 对任何 q 都会失败。
+            if lower_pos_limit > upper_pos_limit:
+                logger.warning(
+                    f"joint {joint_idx + 1}: lower({lower_pos_limit}) > upper({upper_pos_limit}), "
+                    "自动交换 lower/upper。请检查 URDF 中该关节的 limit 标签。"
+                )
+                lower_pos_limit, upper_pos_limit = upper_pos_limit, lower_pos_limit
         upper_joint_pos_limits.append(upper_pos_limit)
         lower_joint_pos_limits.append(lower_pos_limit)
     joint_vel_limits = model.velocityLimit
