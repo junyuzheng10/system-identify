@@ -93,19 +93,19 @@ if __name__ == "__main__":
         inertia_model = InertiaModel(args.robot)
         optimizer_args = {"fourier_config": fourier_config, "robot_config": robot_config, "sysID": inertia_model, "friction_model": friction_model, "use_bounded": args.use_bounded, "verbose": True}
         optimizer_input_args = (fourier_config, robot_config, inertia_model, friction_model, args.use_bounded, True)
-        optimize_options = {"maxiter": 30, "disp": True, "initial_constr_penalty": args.constr_penalty}
+        optimize_options = {"maxiter": 300, "disp": True, "initial_constr_penalty": args.constr_penalty}
     elif args.excite_type == "condFrictionA":
         loss = params2condFrictionA
         inertia_model = InertiaModel(args.robot)
         optimizer_args = {"fourier_config": fourier_config, "robot_config": robot_config, "sysID": inertia_model, "friction_model": friction_model, "use_bounded": args.use_bounded, "verbose": True}
         optimizer_input_args = (fourier_config, robot_config, inertia_model, friction_model, args.use_bounded, True)
-        optimize_options = {"maxiter": 30, "disp": True, "initial_constr_penalty": args.constr_penalty}
+        optimize_options = {"maxiter": 300, "disp": True, "initial_constr_penalty": args.constr_penalty}
     elif args.excite_type == "condFrictionD":
         loss = params2condFrictionD
         inertia_model = InertiaModel(args.robot)
         optimizer_args = {"fourier_config": fourier_config, "robot_config": robot_config, "sysID": inertia_model, "friction_model": friction_model, "use_bounded": args.use_bounded, "verbose": True}
         optimizer_input_args = (fourier_config, robot_config, inertia_model, friction_model, args.use_bounded, True)
-        optimize_options = {"maxiter": 30, "disp": True, "initial_constr_penalty": args.constr_penalty}
+        optimize_options = {"maxiter": 300, "disp": True, "initial_constr_penalty": args.constr_penalty}
 
     # TODO: starting optimization
     logger.info("=== Phase 1: Global Coarse Search (Differential Evolution) ===")
