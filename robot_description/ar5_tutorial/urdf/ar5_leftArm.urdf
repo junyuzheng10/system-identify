@@ -31,7 +31,7 @@
 
 
   <!-- Used for fixing robot to Gazebo 'base_link' -->
-  <link name="world"/>
+  <link name="base_link"/>
   <link
     name="torso">
     <inertial>
@@ -48,6 +48,15 @@
         iyz="0"
         izz="1e-10" />
     </inertial>
+    <visual>
+      <origin xyz="-0.30392 -0.30448 -2.0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="package://ar5_tutorial/meshes/base.stl" scale="0.0008 0.0008 0.0008" />
+      </geometry>
+      <material name="base_grey">
+        <color rgba="0.5 0.5 0.5 1" />
+      </material>
+    </visual>
   </link>
   <joint
     name="torso_base_joint"
@@ -56,7 +65,7 @@
       xyz="-0.0046 0.0 0"
       rpy="0.0 0 0" />
     <parent
-      link="world" />
+      link="base_link" />
     <child
       link="torso" />
     <axis
@@ -98,7 +107,7 @@
   <joint name="AR5-5_07L-W4C4A2_joint_1" type="revolute">
     <parent link="AR5-5_07L-W4C4A2_base"/>
     <child link="AR5-5_07L-W4C4A2_link1"/>
-    <limit effort="108" lower="-3.1067" upper="0.0" velocity="2.0543261909900763"/>
+    <limit effort="108" lower="-3.1067" upper="0.0" velocity="3.0543261909900763"/>
     <axis xyz="0 0 1"/>
     <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
   </joint>
@@ -136,8 +145,8 @@
   <joint name="AR5-5_07L-W4C4A2_joint_2" type="revolute">
     <parent link="AR5-5_07L-W4C4A2_link1"/>
     <child link="AR5-5_07L-W4C4A2_link2"/>
-    <limit effort="108" lower="-2.0944" upper="0.0" velocity="2.0543261909900763"/>
-    <axis xyz="0 1 0"/>
+    <limit effort="108" lower="0.0" upper="2.0944" velocity="3.0543261909900763"/>
+    <axis xyz="0 -1 0"/>
     <origin rpy="0 1.57 0" xyz="0.0 0.0 0.1745"/>
   </joint>
   <transmission name="tran2">
@@ -174,9 +183,9 @@
   <joint name="AR5-5_07L-W4C4A2_joint_3" type="revolute">
     <parent link="AR5-5_07L-W4C4A2_link2"/>
     <child link="AR5-5_07L-W4C4A2_link3"/>
-    <limit effort="66" lower="-3.1067" upper="-1.1838" velocity="2.01238898038469"/>
+    <limit effort="66" lower="-1.5359" upper="0.7" velocity="4.71238898038469"/>
     <axis xyz="0 0 1"/>
-    <origin rpy="0 0 0" xyz="0.0 0.0 0.314"/>
+    <origin rpy="0 0 -1.570796" xyz="0.0 0.0 0.314"/>
   </joint>
   <transmission name="tran3">
     <type>transmission_interface/SimpleTransmission</type>
@@ -212,9 +221,9 @@
   <joint name="AR5-5_07L-W4C4A2_joint_4" type="revolute">
     <parent link="AR5-5_07L-W4C4A2_link3"/>
     <child link="AR5-5_07L-W4C4A2_link4"/>
-    <limit effort="66" lower="0.0" upper="2.1" velocity="2.035987755982989"/>
+    <limit effort="66" lower="-2.1" upper="0.0" velocity="2.035987755982989"/>
     <!--     lower="-1.0472" upper="1.0472" -->
-    <axis xyz="0 1 0"/>
+    <axis xyz="0 -1 0"/>
     <!--     <origin rpy="0 0 0" xyz=0.01 0.0 0.0/> -->
     <origin rpy="0 0 0" xyz="0.01 0.0 0.0"/>
   </joint>
@@ -291,7 +300,7 @@
     <parent link="AR5-5_07L-W4C4A2_link5"/>
     <child link="AR5-5_07L-W4C4A2_link6"/>
     <limit effort="19" lower="-1.0472" upper="1.0472" velocity="4.1887902047863905"/>
-    <axis xyz="0 1 0"/>
+    <axis xyz="0 -1 0"/>
     <origin rpy="0.0 0.0 0" xyz="0.0 0.0 0.0"/>
   </joint>
   <transmission name="tran6">
@@ -433,7 +442,7 @@
     <parent link="AR5-5_07R-W4C4A2_link1"/>
     <child link="AR5-5_07R-W4C4A2_link2"/>
     <limit effort="108" lower="-2.0944" upper="2.0944" velocity="2.0543261909900763"/>
-    <axis xyz="0 1 0"/>
+    <axis xyz="0 -1 0"/>
     <origin rpy="0 1.57 0" xyz="0.0 0.0 0.1745"/>
   </joint>
   <transmission name="tran2">
@@ -470,9 +479,9 @@
   <joint name="AR5-5_07R-W4C4A2_joint_3" type="fixed">
     <parent link="AR5-5_07R-W4C4A2_link2"/>
     <child link="AR5-5_07R-W4C4A2_link3"/>
-    <limit effort="66" lower="-3.1067" upper="3.1067" velocity="2.01238898038469"/>
+    <limit effort="66" lower="-4.6774" upper="1.5359" velocity="2.01238898038469"/>
     <axis xyz="0 0 1"/>
-    <origin rpy="0 0 0" xyz="0.0 0.0 0.314"/>
+    <origin rpy="0 0 1.570796" xyz="0.0 0.0 0.314"/>
   </joint>
   <transmission name="tran3">
     <type>transmission_interface/SimpleTransmission</type>
@@ -625,7 +634,7 @@
     <parent link="AR5-5_07R-W4C4A2_link6"/>
     <child link="AR5-5_07R-W4C4A2_link7"/>
     <limit effort="19" lower="-1.0472" upper="1.0472" velocity="4.1887902047863905"/>
-    <axis xyz="1 0 0"/>
+    <axis xyz="-1 0 0"/>
     <origin rpy="0.0 0.0 0" xyz="0.0 0.0 0.0"/>
   </joint>
   <transmission name="tran7">
