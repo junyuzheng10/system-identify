@@ -37,7 +37,7 @@ def load_data(data_dir):
 
 def main():
     parser = argparse.ArgumentParser(description="Inverse dynamics torque comparison")
-    parser.add_argument("--robot", type=str, default="biped_s49_left_arm")
+    parser.add_argument("--robot", type=str, default="marvinM6_right")
     parser.add_argument("--data_dir", type=str, default="./log_data")
     parser.add_argument("--trim", type=int, default=10, help="Frames to trim from start and end")
     parser.add_argument("--window_length", type=int, default=21, help="Savitzky-Golay window length (odd)")

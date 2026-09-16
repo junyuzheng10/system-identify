@@ -270,7 +270,7 @@ def build_reg_vector(njoints, friction_model, reg_config_path, fallback_lambda):
 
 def main():
     parser = argparse.ArgumentParser(description="System identification from logged data")
-    parser.add_argument("--robot", type=str, default="biped_s49_left_arm")
+    parser.add_argument("--robot", type=str, default="marvinM6_right")
     parser.add_argument("--friction_model", type=str, default="symmetric",
                         choices=["symmetric", "asymmetric"])
     parser.add_argument("--data_dir", type=str, default="./log_data")

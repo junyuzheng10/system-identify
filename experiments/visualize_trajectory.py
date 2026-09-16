@@ -51,6 +51,7 @@ def build_visualizer(robot_name):
     通过创建符号链接让 pinocchio 按 package:// 协议找到 mesh。
     """
     import os
+    import re
     import tempfile
 
     urdf_path = find_path(f"{robot_name}.urdf", "./robot_description")
@@ -60,6 +61,9 @@ def build_visualizer(robot_name):
     # 支持多种机器人：
     #   biped_s49: package://kuavo_assets/models/biped_s49/... -> biped_s49_description
     #   ar5:       package://ar5_tutorial/...                  -> ar5_tutorial
+    #   marvinM6:  mesh 为裸相对文件名（如 base.stl、Base_R.STL，实际在
+    #              meshes/ 子目录下），pinocchio 不按 URDF 目录解析相对路径，
+    #              因此把相对 mesh 路径改写为绝对路径后用临时 URDF 加载。
     tmpdir = Path(tempfile.mkdtemp(prefix="pinocchio_pkg_"))
     package_links = {
         "kuavo_assets/models/biped_s49": package_root / "biped_s49_description",
@@ -70,6 +74,30 @@ def build_visualizer(robot_name):
         if target.exists() and not link.exists():
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(target)
+
+    urdf_text = Path(urdf_path).read_text()
+    mesh_names = re.findall(r'filename="([^"]+)"', urdf_text)
+    if any(not f.startswith("package://") and not os.path.isabs(f) for f in mesh_names):
+        urdf_dir = Path(urdf_path).resolve().parent
+
+        def _resolve_mesh(match):
+            fname = match.group(1)
+            if fname.startswith("package://") or os.path.isabs(fname):
+                return match.group(0)
+            direct = urdf_dir / fname
+            if direct.exists():
+                resolved = direct.resolve()
+            else:
+                hits = sorted(urdf_dir.rglob(Path(fname).name))
+                if not hits:
+                    return match.group(0)
+                resolved = hits[0].resolve()
+            return f'filename="{resolved}"'
+
+        urdf_text = re.sub(r'filename="([^"]+)"', _resolve_mesh, urdf_text)
+        tmp_urdf = tmpdir / "urdf_with_abs_mesh.urdf"
+        tmp_urdf.write_text(urdf_text)
+        urdf_path = str(tmp_urdf)
 
     model, collision_model, visual_model = pin.buildModelsFromUrdf(
         urdf_path, package_dirs=[str(tmpdir)]
@@ -106,7 +134,7 @@ def main():
     parser.add_argument(
         "--robot",
         type=str,
-        default="ar5_leftArm",
+        default="marvinM6_right",
         help="机器人名（对应 robot_description 下的 URDF）",
     )
     parser.add_argument(
@@ -124,6 +152,7 @@ def main():
     parser.add_argument(
         "--loop",
         action="store_true",
+        default=True,
         help="循环回放",
     )
     args = parser.parse_args()
