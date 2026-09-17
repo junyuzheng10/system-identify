@@ -531,7 +531,7 @@ def constraints_velocity_only(flatten_params, fourier_config, robot_config, opti
 
     upper_limits = np.array(robot_config["upper_joint_pos_limits"])
     lower_limits = np.array(robot_config["lower_joint_pos_limits"])
-    q_range = 0.5 * (upper_limits - lower_limits) * 0.95  # (njoints,)
+    q_range = 0.5 * (upper_limits - lower_limits) * 0.8  # (njoints,)
 
     def vel_constraint_func(x):
         A = x[:start_idx].reshape(njoints, order)
