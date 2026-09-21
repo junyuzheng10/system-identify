@@ -334,6 +334,8 @@ def main():
     a_fd = a_fd[n:-n]
     a_cmd = a_cmd[n:-n]
     tau_meas = tau_meas[n:-n]
+    if a_meas is not None:
+        a_meas = a_meas[n:-n]
     logger.info(f"Trimmed {n} frames from each end, remaining: {t.shape[0]} samples")
 
     # Plot raw data: position, velocity, torque
