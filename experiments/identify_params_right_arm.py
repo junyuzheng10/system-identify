@@ -142,6 +142,7 @@ def load_data(data_dir):
         a_fd: acceleration via central difference of v (n_samples, 7)
         tau: measured torques (n_samples, 7)
         a_cmd: expected acceleration from command trajectory, resampled to t (n_samples, 7)
+        a_meas: measured sensor acceleration from sensors_joint_a.csv, resampled to t; None if absent
     """
     data_dir = Path(data_dir)
 
@@ -171,7 +172,22 @@ def load_data(data_dir):
         [np.interp(t, t_cmd, a_cmd_raw[:, j]) for j in range(a_cmd_raw.shape[1])]
     )
 
-    return t, q, v, a_fd, tau, a_cmd
+    # Measured sensor acceleration (optional, present in newer logs e.g. replay_right_arm_048)
+    a_meas_file = data_dir / "sensors_joint_a.csv"
+    if a_meas_file.exists():
+        df_a = pd.read_csv(a_meas_file)
+        t_a = df_a["time"].values
+        a_raw = df_a.iloc[:, 1:8].values  # j0-j6
+        if len(t_a) == len(t) and np.allclose(t_a, t):
+            a_meas = a_raw
+        else:
+            a_meas = np.column_stack(
+                [np.interp(t, t_a, a_raw[:, j]) for j in range(a_raw.shape[1])]
+            )
+    else:
+        a_meas = None
+
+    return t, q, v, a_fd, tau, a_cmd, a_meas
 
 
 def build_reg_vector(njoints, friction_model, reg_config_path, fallback_lambda):
@@ -277,7 +293,7 @@ def main():
     parser.add_argument("--robot", type=str, default="marvinM6_right")
     parser.add_argument("--friction_model", type=str, default="symmetric",
                         choices=["symmetric", "asymmetric"])
-    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_010_log_data")
+    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_048_log_data")
     parser.add_argument("--val_dir", type=str, default=None, help="Directory for validation data (optional, skipped if not provided)")
     parser.add_argument("--trim", type=int, default=1, help="Number of frames to trim from start and end")
     parser.add_argument("--output_urdf", type=str, default=None, help="Output URDF path (default: disabled)")
@@ -290,17 +306,23 @@ def main():
     parser.add_argument("--vbrk_lb", type=float, default=1e-6, help="Lower bound for vbrk")
     parser.add_argument("--vbrk_ub", type=float, default=0.1, help="Upper bound for vbrk")
     parser.add_argument("--val_acc_method", type=str, default="central",
-                        choices=["central", "causal", "zero"],
+                        choices=["central", "causal", "sensors", "csv", "zero"],
                         help="Acceleration computation method for validation: "
                              "'central' = central difference + Savitzky-Golay (non-causal), "
                              "'causal' = causal backward difference + causal Savitzky-Golay, "
+                             "'sensors' = measured acceleration from sensors_joint_a.csv (fallback: central), "
+                             "'csv' = command acceleration from csv_trajectory_a.csv (resampled), "
                              "'zero' = zero acceleration (gravity + friction only)")
+    parser.add_argument("--acc_source", type=str, default="sensors", choices=["sensors", "csv"],
+                        help="Training acceleration source: 'sensors' = measured acceleration from sensors_joint_a.csv "
+                             "(fallback: central diff of velocity if the file is absent), "
+                             "'csv' = command acceleration from csv_trajectory_a.csv (resampled)")
     parser.add_argument("--save_params", type=str, default="experiments/identified_params_right_arm.npz",
                         help="Save identified phi and vbrk to an NPZ file (default: experiments/identified_params_right_arm.npz)")
     args = parser.parse_args()
 
     # Load data
-    t, q, v, a_fd, tau_meas, a_cmd = load_data(args.data_dir)
+    t, q, v, a_fd, tau_meas, a_cmd, a_meas = load_data(args.data_dir)
     n_samples_full, njoints = q.shape
     logger.info(f"Loaded {n_samples_full} samples, {njoints} joints")
 
@@ -343,8 +365,16 @@ def main():
     fig_acc.suptitle("Expected Acceleration (blue) vs Central Diff (red)")
     plt.tight_layout()
 
-    # Use central-diff acceleration for identification
-    a = a_fd
+    # Select training acceleration source: CSV command acceleration or measured sensor acceleration
+    if args.acc_source == "csv":
+        a = a_cmd
+        logger.info("Training acceleration source: CSV command acceleration (csv_trajectory_a)")
+    elif a_meas is not None:
+        a = a_meas
+        logger.info("Training acceleration source: measured sensor acceleration (sensors_joint_a)")
+    else:
+        a = a_fd
+        logger.warning("sensors_joint_a.csv not found in data dir; falling back to central diff + Savgol")
     n_samples = t.shape[0]
 
     # Build inertia model
@@ -537,9 +567,10 @@ def main():
     if args.val_dir is not None:
         logger.info("=" * 80)
         logger.info(f"Validating identified parameters on: {args.val_dir}")
-        t_val, q_val, v_val, a_fd_val, tau_meas_val, a_cmd_val = load_data(args.val_dir)
+        t_val, q_val, v_val, a_fd_val, tau_meas_val, a_cmd_val, a_meas_val = load_data(args.val_dir)
         t_val = t_val[n:-n]; q_val = q_val[n:-n]; v_val = v_val[n:-n]
         a_fd_val = a_fd_val[n:-n]; tau_meas_val = tau_meas_val[n:-n]; a_cmd_val = a_cmd_val[n:-n]
+        a_meas_val = a_meas_val[n:-n] if a_meas_val is not None else None
         n_samples_val = t_val.shape[0]
         logger.info(f"Loaded {n_samples_val} validation samples, {njoints} joints")
 
@@ -550,6 +581,16 @@ def main():
         elif args.val_acc_method == "causal":
             a_val = compute_causal_acceleration(t_val, v_val)
             acc_label = "Causal Savgol"
+        elif args.val_acc_method == "sensors":
+            if a_meas_val is not None:
+                a_val = a_meas_val
+                acc_label = "Sensor Measured"
+            else:
+                a_val = a_fd_val
+                acc_label = "Central Diff + Savgol (fallback)"
+        elif args.val_acc_method == "csv":
+            a_val = a_cmd_val
+            acc_label = "Command CSV"
         else:  # zero
             a_val = np.zeros_like(v_val)
             acc_label = "Zero Acceleration"

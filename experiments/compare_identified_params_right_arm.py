@@ -52,20 +52,37 @@ def load_data(data_dir):
     a_cmd = np.column_stack(
         [np.interp(t, t_cmd, a_cmd_raw[:, j]) for j in range(a_cmd_raw.shape[1])]
     )
-    return t, q, v, a_fd, tau, a_cmd
+    # Measured sensor acceleration (optional, present in newer logs e.g. replay_right_arm_048)
+    a_meas_file = data_dir / "sensors_joint_a.csv"
+    if a_meas_file.exists():
+        df_a = pd.read_csv(a_meas_file)
+        t_a = df_a["time"].values
+        a_raw = df_a.iloc[:, 1:8].values  # j0-j6
+        if len(t_a) == len(t) and np.allclose(t_a, t):
+            a_meas = a_raw
+        else:
+            a_meas = np.column_stack(
+                [np.interp(t, t_a, a_raw[:, j]) for j in range(a_raw.shape[1])]
+            )
+    else:
+        a_meas = None
+
+    return t, q, v, a_fd, tau, a_cmd, a_meas
 
 
 def main():
     parser = argparse.ArgumentParser(description="Compare identified params on validation data (right arm)")
     parser.add_argument("--params", type=str, default="experiments/identified_params_right_arm.npz",
                         help="Path to NPZ file with identified phi and vbrk (default: experiments/identified_params_right_arm.npz)")
-    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_002_log_data",
+    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_026_log_data",
                         help="Validation data directory (default: right-arm training data, used as validation for now)")
     parser.add_argument("--trim", type=int, default=1,
                         help="Number of frames to trim from start and end")
-    parser.add_argument("--val_acc_method", type=str, default="zero",
-                        choices=["central", "causal", "zero"],
-                        help="Acceleration computation method: 'central', 'causal', or 'zero' (no acceleration input)")
+    parser.add_argument("--val_acc_method", type=str, default="causal",
+                        choices=["central", "causal", "sensors", "csv", "zero"],
+                        help="Acceleration computation method: 'central', 'causal', "
+                             "'sensors' (measured acceleration from sensors_joint_a.csv, fallback: central), "
+                             "'csv' (command acceleration from csv_trajectory_a.csv, resampled), or 'zero' (no acceleration input)")
     args = parser.parse_args()
 
     # Load identified parameters
@@ -81,7 +98,7 @@ def main():
     logger.info(f"  vbrk={vbrk:.8f}, phi shape={phi.shape}")
 
     # Load validation data
-    t, q, v, a_fd, tau_meas, a_cmd = load_data(args.data_dir)
+    t, q, v, a_fd, tau_meas, a_cmd, a_meas = load_data(args.data_dir)
     n_samples_full, nj = q.shape
     logger.info(f"Loaded {n_samples_full} samples, {njoints} joints from {args.data_dir}")
 
@@ -89,6 +106,7 @@ def main():
     n = args.trim
     t = t[n:-n]; q = q[n:-n]; v = v[n:-n]
     a_fd = a_fd[n:-n]; tau_meas = tau_meas[n:-n]; a_cmd = a_cmd[n:-n]
+    a_meas = a_meas[n:-n] if a_meas is not None else None
     n_samples = t.shape[0]
     logger.info(f"Trimmed {n} frames from each end, remaining: {n_samples} samples")
 
@@ -99,6 +117,16 @@ def main():
     elif args.val_acc_method == "causal":
         a = compute_causal_acceleration(t, v)
         acc_label = "Causal Savgol"
+    elif args.val_acc_method == "sensors":
+        if a_meas is not None:
+            a = a_meas
+            acc_label = "Sensor Measured"
+        else:
+            a = a_fd
+            acc_label = "Central Diff + Savgol (fallback)"
+    elif args.val_acc_method == "csv":
+        a = a_cmd
+        acc_label = "Command CSV"
     else:  # zero
         a = np.zeros_like(v)
         acc_label = "Zero Acceleration"
