@@ -1,9 +1,13 @@
 #!/usr/bin/env python
 """Minimal system identification for marvinM6 right arm.
 
-Uses pinocchio's analytical joint-torque regressor (minimal parameter set,
-10 params/joint: mass, com_x, com_y, com_z, Ixx, Iyy, Izz, Ixy, Ixz, Iyz),
-no friction, no armature, no regularization. Plain unweighted least squares.
+Uses pinocchio's analytical joint-torque regressor (minimal inertia parameter set,
+10 params/joint) + asymmetric friction (Fc+/Fv+/Fc-/Fv-, 4 params/joint) +
+direction-dependent armature (armature+/armature-, 2 params/joint).
+Plain unweighted least squares, no regularization.
+
+Parameter layout:
+  [inertia(10*nj) | Fc+(nj) | Fv+(nj) | Fc-(nj) | Fv-(nj) | armature+(nj) | armature-(nj)]
 
 Usage:
     python experiments/identify_right_arm_simple.py [--data_dir DIR] [--acc_source sensors|csv]
@@ -65,14 +69,25 @@ def load_data(data_dir):
     return t, q, v, a_fd, tau, a_cmd, a_meas
 
 
+def feat_block(feat, N, nj):
+    """Build regressor block from a feature array (N, nj) -> (N*nj, nj).
+
+    Equivalent to feature2regressor: each row's feature values multiply identity.
+    """
+    repeated = np.repeat(feat, nj, axis=0)        # (N*nj, nj)
+    ident = np.tile(np.eye(nj), (N, 1))           # (N*nj, nj)
+    return repeated * ident
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Minimal right-arm inertia identification")
+    parser = argparse.ArgumentParser(description="Minimal right-arm identification (inertia + asym friction + dir-dep armature)")
     parser.add_argument("--data_dir", type=str, default="./replay_right_arm_101_log_data")
     parser.add_argument("--robot", type=str, default="marvinM6_right")
-    parser.add_argument("--acc_source", type=str, default="sensors", choices=["sensors", "csv"])
+    parser.add_argument("--acc_source", type=str, default="csv", choices=["sensors", "csv"])
     parser.add_argument("--trim", type=int, default=1)
     parser.add_argument("--savgol_window", type=int, default=21, help="Savgol window for sensor acceleration filter")
     parser.add_argument("--savgol_poly", type=int, default=5)
+    parser.add_argument("--vbrk", type=float, default=0.001, help="Coulomb smoothing parameter (vcoul = 2*vbrk)")
     args = parser.parse_args()
 
     # Load
@@ -107,20 +122,60 @@ def main():
     model = pin.buildModelFromUrdf(urdf_file)
     data = model.createData()
 
-    # Build regressor: Y(N*nj, 10*nj) using analytical minimal parameter set
-    logger.info("Building regressor...")
-    Y = pin.computeJointTorqueRegressor(model, data, q[0], v[0], a[0])
-    n_params = Y.shape[1]
-    Y_all = np.zeros((N * nj, n_params))
+    # Build inertia regressor: Y_inertia(N*nj, 10*nj)
+    logger.info("Building inertia regressor...")
+    Y_inertia = np.zeros((N * nj, 10 * nj))
     for i in range(N):
-        Y_all[i * nj:(i + 1) * nj] = pin.computeJointTorqueRegressor(model, data, q[i], v[i], a[i])
-    tau_flat = tau_meas.reshape(-1)
-    logger.info(f"Regressor shape: {Y_all.shape}, condition: {np.linalg.cond(Y_all):.2f}")
+        Y_inertia[i * nj:(i + 1) * nj] = pin.computeJointTorqueRegressor(model, data, q[i], v[i], a[i])
 
-    # Plain least squares
+    # Build asymmetric friction regressor: Y_friction(N*nj, 4*nj)
+    #   [Fc+(nj) | Fv+(nj) | Fc-(nj) | Fv-(nj)]
+    #   No negation: sensor measures motor output torque (includes friction compensation),
+    #   so positive friction params = motor compensating friction in direction of motion.
+    logger.info("Building asymmetric friction regressor (Coulomb + viscous)...")
+    vcoul = args.vbrk * 2
+    sign_pos = (v > 0).astype(float)
+    sign_neg = (v < 0).astype(float)
+    tanh_v = np.tanh(v / vcoul)
+    feat_Fc_pos = tanh_v * sign_pos
+    feat_Fv_pos = v * sign_pos
+    feat_Fc_neg = tanh_v * sign_neg
+    feat_Fv_neg = v * sign_neg
+    Y_friction = np.hstack([
+        feat_block(feat_Fc_pos, N, nj),
+        feat_block(feat_Fv_pos, N, nj),
+        feat_block(feat_Fc_neg, N, nj),
+        feat_block(feat_Fv_neg, N, nj),
+    ])
+
+    # Build direction-dependent armature regressor: Y_armature(N*nj, 2*nj)
+    #   [armature+(nj) | armature-(nj)]
+    #   Direction split by acceleration sign (not velocity): armature opposes acceleration.
+    #   No negation: sensor measures motor output, positive armature = motor compensating inertia.
+    logger.info("Building direction-dependent armature regressor (split by acceleration sign)...")
+    sign_a_pos = (a > 0).astype(float)
+    sign_a_neg = (a < 0).astype(float)
+    feat_arm_pos = a * sign_a_pos
+    feat_arm_neg = a * sign_a_neg
+    Y_armature = np.hstack([
+        feat_block(feat_arm_pos, N, nj),
+        feat_block(feat_arm_neg, N, nj),
+    ])
+
+    # Full regressor
+    Y_all = np.hstack([Y_inertia, Y_friction, Y_armature])
+    n_inertia = 10 * nj
+    n_friction = 4 * nj
+    n_armature = 2 * nj
+    n_params = n_inertia + n_friction + n_armature
+    tau_flat = tau_meas.reshape(-1)
+    logger.info(f"Regressor shape: {Y_all.shape} ({n_inertia} inertia + {n_friction} friction + {n_armature} armature = {n_params} params)")
+    logger.info(f"Condition: {np.linalg.cond(Y_all):.2f}")
+
+    # Plain least squares (friction/armature features not negated: sensor measures
+    # motor output torque, so positive params = motor compensating friction/inertia)
     phi, residuals, rank, sv = np.linalg.lstsq(Y_all, tau_flat, rcond=None)
-    logger.info(f"Rank: {rank}, singular values: [{sv.min():.4e}, {sv.max():.4e}]")
-    logger.info(f"phi shape: {phi.shape}")
+    logger.info(f"Rank: {rank}/{n_params}, singular values: [{sv.min():.4e}, {sv.max():.4e}]")
 
     # Predict
     tau_pred = (Y_all @ phi).reshape(N, nj)
@@ -135,12 +190,26 @@ def main():
         logger.info(f"J{j+1:>4}  | {rms_meas:10.4f} | {rms_err:12.6f} {rms_err/rms_meas:7.4f}")
     logger.info("=" * 70)
 
-    # Print mass/CoM per joint
+    # Print inertia params
+    logger.info("--- Inertia ---")
     for j in range(nj):
         pi = phi[j * 10:(j + 1) * 10]
         mass = pi[0]
-        com = pi[1:4] / mass if mass > 1e-10 else np.zeros(3)
+        com = pi[1:4] / mass if abs(mass) > 1e-10 else np.zeros(3)
         logger.info(f"J{j+1}: Mass={mass:.6f}, CoM=[{com[0]:.6f}, {com[1]:.6f}, {com[2]:.6f}]")
+
+    # Print friction params
+    logger.info("--- Friction (Coulomb Fc / viscous Fv) ---")
+    phi_fric = phi[n_inertia:n_inertia + n_friction].reshape(4, nj)  # [Fc+, Fv+, Fc-, Fv-]
+    for j in range(nj):
+        logger.info(f"J{j+1}: Fc+={phi_fric[0,j]:.6f}, Fv+={phi_fric[1,j]:.6f}, "
+                    f"Fc-={phi_fric[2,j]:.6f}, Fv-={phi_fric[3,j]:.6f}")
+
+    # Print armature params
+    logger.info("--- Armature (direction-dependent, split by acceleration sign) ---")
+    phi_arm = phi[n_inertia + n_friction:n_inertia + n_friction + n_armature].reshape(2, nj)
+    for j in range(nj):
+        logger.info(f"J{j+1}: arm+={phi_arm[0,j]:.6f}, arm-={phi_arm[1,j]:.6f}")
 
     # fig1: acceleration used vs csv
     fig1, axes1 = plt.subplots(nj, 1, sharex=True, figsize=(12, 2 * nj))
@@ -165,7 +234,7 @@ def main():
         ax.set_ylabel(f"J{j+1}\n(N·m)")
     axes2[0].legend(loc='upper right', fontsize=8)
     axes2[-1].set_xlabel("time (s)")
-    fig2.suptitle("Predicted vs Measured Torque (inertia-only, plain LS)")
+    fig2.suptitle("Predicted vs Measured Torque (inertia + Coulomb/viscous friction + dir-dep armature)")
     plt.tight_layout()
 
     plt.show()
