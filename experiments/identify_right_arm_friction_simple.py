@@ -111,6 +111,8 @@ def main():
     parser.add_argument("--savgol_window", type=int, default=21)
     parser.add_argument("--savgol_poly", type=int, default=5)
     parser.add_argument("--vbrk", type=float, default=0.001, help="Coulomb smoothing parameter (vcoul = 2*vbrk)")
+    parser.add_argument("--save_params", type=str, default="experiments/identified_params_right_arm_friction.npz",
+                        help="Path to save identified friction params NPZ")
     args = parser.parse_args()
 
     # Load + align + trim
@@ -250,6 +252,24 @@ def main():
     axes2[0].legend(loc='upper right', fontsize=8)
     axes2[-1].set_xlabel("time (s)")
     fig2.suptitle("Predicted vs Measured Torque (URDF inertia frozen, friction identified)")
+
+    # Save identified friction parameters
+    np.savez(
+        args.save_params,
+        phi_friction=phi,
+        robot=args.robot,
+        njoints=nj,
+        n_friction=n_friction,
+        n_armature=n_armature,
+        n_offset=n_offset,
+        n_params=n_friction + n_armature + n_offset,
+        vbrk=args.vbrk,
+        acc_source=args.acc_source,
+        vcoul=2 * args.vbrk,
+        inertia_frozen=True,
+    )
+    logger.info(f"Saved friction params ({n_friction + n_armature + n_offset} params) to {args.save_params}")
+
     plt.tight_layout()
 
     plt.show()

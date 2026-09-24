@@ -128,6 +128,8 @@ def main():
     parser.add_argument("--savgol_window", type=int, default=21, help="Savgol window for sensor acceleration filter")
     parser.add_argument("--savgol_poly", type=int, default=5)
     parser.add_argument("--vbrk", type=float, default=0.001, help="Coulomb smoothing parameter (vcoul = 2*vbrk)")
+    parser.add_argument("--save_params", type=str, default="experiments/identified_params_right_arm_simple.npz",
+                        help="Path to save identified params NPZ")
     args = parser.parse_args()
 
     # Load + align + trim
@@ -270,6 +272,24 @@ def main():
     axes2[0].legend(loc='upper right', fontsize=8)
     axes2[-1].set_xlabel("time (s)")
     fig2.suptitle("Predicted vs Measured Torque (inertia + symmetric Coulomb/viscous + armature + offset)")
+
+    # Save identified parameters
+    np.savez(
+        args.save_params,
+        phi=phi,
+        robot=args.robot,
+        njoints=nj,
+        n_params=n_params,
+        n_inertia=n_inertia,
+        n_friction=n_friction,
+        n_armature=n_armature,
+        n_offset=n_offset,
+        vbrk=args.vbrk,
+        acc_source=args.acc_source,
+        vcoul=2 * args.vbrk,
+    )
+    logger.info(f"Saved {n_params} params to {args.save_params}")
+
     plt.tight_layout()
 
     plt.show()
