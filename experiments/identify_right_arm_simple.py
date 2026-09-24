@@ -27,46 +27,85 @@ import pinocchio as pin
 from system_identification.utils import find_path, savgol_filter_acceleration
 
 
-def load_data(data_dir):
+def load_data(data_dir, trim_head=1, trim_tail=1):
+    """Load and align all sensor/command data onto a common time axis.
+
+    Reads: sensors_joint_q.csv, sensors_joint_v.csv, sensors_joint_torque.csv,
+           csv_trajectory_a.csv, and optionally sensors_joint_a.csv.
+    All signals are interpolated onto the q-sensor time axis (reference clock).
+    trim_head / trim_tail frames are removed from start/end after alignment.
+    """
     data_dir = Path(data_dir)
     df_q = pd.read_csv(data_dir / "sensors_joint_q.csv")
     df_v = pd.read_csv(data_dir / "sensors_joint_v.csv")
     df_tau = pd.read_csv(data_dir / "sensors_joint_torque.csv")
     df_cmd = pd.read_csv(data_dir / "csv_trajectory_a.csv")
 
-    t = df_q["time"].values
+    # Reference time axis from joint position sensor
+    t_ref = df_q["time"].values
     q = df_q.iloc[:, 1:8].values
-    v = df_v.iloc[:, 1:8].values
-    tau = df_tau.iloc[:, 1:8].values
+    nj = q.shape[1]
 
-    # Central difference acceleration + light Savgol
-    dt = np.diff(t)
-    a_fd = np.zeros_like(v)
-    a_fd[1:-1] = (v[2:] - v[:-2]) / (dt[1:] + dt[:-1])[:, None]
-    a_fd = savgol_filter_acceleration(a_fd, window_length=21, polyorder=3)
+    # Align velocity onto reference
+    t_v = df_v["time"].values
+    v_raw = df_v.iloc[:, 1:1+nj].values
+    if len(t_v) == len(t_ref) and np.allclose(t_v, t_ref):
+        v = v_raw
+    else:
+        v = np.column_stack([np.interp(t_ref, t_v, v_raw[:, j]) for j in range(nj)])
 
-    # CSV command acceleration
+    # Align torque onto reference
+    t_tau = df_tau["time"].values
+    tau_raw = df_tau.iloc[:, 1:1+nj].values
+    if len(t_tau) == len(t_ref) and np.allclose(t_tau, t_ref):
+        tau_meas = tau_raw
+    else:
+        tau_meas = np.column_stack([np.interp(t_ref, t_tau, tau_raw[:, j]) for j in range(nj)])
+
+    # Align CSV command acceleration onto reference
     t_cmd = df_cmd["time"].values
-    a_cmd_raw = df_cmd.iloc[:, 1:8].values
-    a_cmd = np.column_stack(
-        [np.interp(t, t_cmd, a_cmd_raw[:, j]) for j in range(a_cmd_raw.shape[1])]
-    )
+    a_cmd_raw = df_cmd.iloc[:, 1:1+nj].values
+    a_cmd = np.column_stack([np.interp(t_ref, t_cmd, a_cmd_raw[:, j]) for j in range(nj)])
 
-    # Measured sensor acceleration (optional)
+    # Align measured sensor acceleration (optional)
     a_meas = None
     a_meas_file = data_dir / "sensors_joint_a.csv"
     if a_meas_file.exists():
         df_a = pd.read_csv(a_meas_file)
         t_a = df_a["time"].values
-        a_raw = df_a.iloc[:, 1:8].values
-        if len(t_a) == len(t) and np.allclose(t_a, t):
+        a_raw = df_a.iloc[:, 1:1+nj].values
+        if len(t_a) == len(t_ref) and np.allclose(t_a, t_ref):
             a_meas = a_raw
         else:
-            a_meas = np.column_stack(
-                [np.interp(t, t_a, a_raw[:, j]) for j in range(a_raw.shape[1])]
-            )
+            a_meas = np.column_stack([np.interp(t_ref, t_a, a_raw[:, j]) for j in range(nj)])
 
-    return t, q, v, a_fd, tau, a_cmd, a_meas
+    logger.info(f"Aligned {nj} signals onto q-sensor clock ({len(t_ref)} samples)")
+    # Report alignment stats
+    for name, t_src in [("v", t_v), ("tau", t_tau), ("cmd", t_cmd)]:
+        if len(t_src) != len(t_ref) or not np.allclose(t_src, t_ref):
+            logger.info(f"  {name}: {len(t_src)} samples -> interpolated to {len(t_ref)}")
+        else:
+            logger.info(f"  {name}: already aligned ({len(t_src)} samples)")
+
+    # Trim boundary frames
+    th, tt = trim_head, trim_tail
+    if th > 0 or tt > 0:
+        t_ref = t_ref[th:len(t_ref)-tt] if tt > 0 else t_ref[th:]
+        q = q[th:len(q)-tt] if tt > 0 else q[th:]
+        v = v[th:len(v)-tt] if tt > 0 else v[th:]
+        tau_meas = tau_meas[th:len(tau_meas)-tt] if tt > 0 else tau_meas[th:]
+        a_cmd = a_cmd[th:len(a_cmd)-tt] if tt > 0 else a_cmd[th:]
+        if a_meas is not None:
+            a_meas = a_meas[th:len(a_meas)-tt] if tt > 0 else a_meas[th:]
+        logger.info(f"Trimmed head={th}, tail={tt}, remaining: {len(t_ref)} samples")
+
+    # Central difference acceleration from aligned velocity
+    dt = np.diff(t_ref)
+    a_fd = np.zeros_like(v)
+    a_fd[1:-1] = (v[2:] - v[:-2]) / (dt[1:] + dt[:-1])[:, None]
+    a_fd = savgol_filter_acceleration(a_fd, window_length=21, polyorder=3)
+
+    return t_ref, q, v, a_fd, tau_meas, a_cmd, a_meas
 
 
 def feat_block(feat, N, nj):
@@ -84,18 +123,16 @@ def main():
     parser.add_argument("--data_dir", type=str, default="./replay_right_arm_101_log_data")
     parser.add_argument("--robot", type=str, default="marvinM6_right")
     parser.add_argument("--acc_source", type=str, default="csv", choices=["sensors", "csv"])
-    parser.add_argument("--trim", type=int, default=1)
+    parser.add_argument("--trim_head", type=int, default=1, help="Frames to drop from start")
+    parser.add_argument("--trim_tail", type=int, default=1, help="Frames to drop from end")
     parser.add_argument("--savgol_window", type=int, default=21, help="Savgol window for sensor acceleration filter")
     parser.add_argument("--savgol_poly", type=int, default=5)
     parser.add_argument("--vbrk", type=float, default=0.001, help="Coulomb smoothing parameter (vcoul = 2*vbrk)")
     args = parser.parse_args()
 
-    # Load
-    t, q, v, a_fd, tau_meas, a_cmd, a_meas = load_data(args.data_dir)
-    n = args.trim
-    t = t[n:-n]; q = q[n:-n]; v = v[n:-n]; a_fd = a_fd[n:-n]; tau_meas = tau_meas[n:-n]; a_cmd = a_cmd[n:-n]
-    if a_meas is not None:
-        a_meas = a_meas[n:-n]
+    # Load + align + trim
+    t, q, v, a_fd, tau_meas, a_cmd, a_meas = load_data(
+        args.data_dir, trim_head=args.trim_head, trim_tail=args.trim_tail)
     N, nj = q.shape
     logger.info(f"Loaded {N} samples, {nj} joints from {args.data_dir}")
 
