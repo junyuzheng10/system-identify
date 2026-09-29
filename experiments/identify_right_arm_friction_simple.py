@@ -148,11 +148,19 @@ def main():
     model.damping[:] = 0.0
     logger.info(f"URDF inertia frozen, friction/damping zeroed. Computing nominal RNEA torque...")
 
-    # Compute nominal rigid-body torque (frozen URDF inertia)
+    # Compute nominal rigid-body torque (frozen URDF inertia) and the inertia
+    # regressor; the URDF minimal parameter set is recovered analytically by
+    # fitting the regressor to the RNEA output (exact, since URDF params lie
+    # in the span of the minimal parameter set).
     tau_rnea = np.zeros((N, nj))
+    Y_inertia = np.zeros((N * nj, 10 * nj))
     for i in range(N):
+        Y_inertia[i * nj:(i + 1) * nj] = pin.computeJointTorqueRegressor(model, data, q[i], v[i], a[i])
         tau_rnea[i] = pin.rnea(model, data, q[i], v[i], a[i])
+    phi_inertia, _, rank_i, _ = np.linalg.lstsq(Y_inertia, tau_rnea.reshape(-1), rcond=None)
+    fit_err = np.abs(Y_inertia @ phi_inertia - tau_rnea.reshape(-1)).max()
     logger.info(f"Nominal RNEA torque computed (mean abs: {np.mean(np.abs(tau_rnea)):.4f} N·m)")
+    logger.info(f"URDF minimal inertia params recovered: rank={rank_i}/70, max fit err={fit_err:.2e} N·m")
 
     # Residual = measured - nominal rigid-body torque
     tau_resid = tau_meas - tau_rnea
@@ -253,22 +261,29 @@ def main():
     axes2[-1].set_xlabel("time (s)")
     fig2.suptitle("Predicted vs Measured Torque (URDF inertia frozen, friction identified)")
 
-    # Save identified friction parameters
+    # Save identified parameters — same format as identify_right_arm_simple.py:
+    # phi = [inertia(10*nj) | Fc(nj) | Fv(nj) | armature(nj) | offset(nj)]
+    # Inertia block = URDF minimal parameter set (analytically recovered);
+    # inertia_frozen flag marks that it was not identified from data.
+    n_inertia = 10 * nj
+    n_params = n_inertia + n_friction + n_armature + n_offset
+    phi_full = np.concatenate([phi_inertia, phi])
     np.savez(
         args.save_params,
-        phi_friction=phi,
+        phi=phi_full,
         robot=args.robot,
         njoints=nj,
+        n_params=n_params,
+        n_inertia=n_inertia,
         n_friction=n_friction,
         n_armature=n_armature,
         n_offset=n_offset,
-        n_params=n_friction + n_armature + n_offset,
         vbrk=args.vbrk,
         acc_source=args.acc_source,
         vcoul=2 * args.vbrk,
         inertia_frozen=True,
     )
-    logger.info(f"Saved friction params ({n_friction + n_armature + n_offset} params) to {args.save_params}")
+    logger.info(f"Saved {n_params} params (inertia = URDF minimal params) to {args.save_params}")
 
     plt.tight_layout()
 
