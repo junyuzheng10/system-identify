@@ -1,16 +1,28 @@
 #!/usr/bin/env python
-"""Friction-only identification for marvinM6 right arm.
+"""Friction identification for marvinM6 right arm (URDF inertia frozen).
 
-Freezes URDF inertia parameters (mass, CoM, inertia tensor), uses pinocchio RNEA
-to compute the nominal rigid-body torque (gravity + Coriolis + inertia), then
-identifies only friction (Coulomb + viscous), armature, and torque offset on
-the residual.
+Freezes URDF inertia parameters (extracted exactly via
+model.inertias[j].toDynamicParameters(), NOT lstsq recovery — the latter yields
+a pathological minimum-norm equivalent set with 1e11-magnitude/zero/negative
+masses), computes the nominal rigid-body torque via RNEA, then identifies only
+friction (Coulomb + viscous), armature, and torque offset on the residual.
 
 Parameter layout (only friction params are identified):
   [Fc(nj) | Fv(nj) | armature(nj) | offset(nj)]
 
+Optional physical constraint (--nonneg / --no-nonneg, default ON): friction
+(Fc, Fv) and armature are constrained >= 0 via bounded lsq_linear (offset
+unbounded). Unconstrained lstsq can assign negative friction/armature when they
+are collinear with URDF inertia errors.
+
+Output npz layout (identical to identify_right_arm.py / identify_right_arm_joint.py,
+directly consumable by the C++ TorquePredictor used by replay/dyn_comp/collision
+observer):
+  phi = [inertia(10*nj) | Fc(nj) | Fv(nj) | armature(nj) | offset(nj)]
+  vbrk = fixed scalar (C++ broadcasts to all joints)
+
 Usage:
-    python experiments/identify_right_arm_friction_simple.py [--data_dir DIR] [--acc_source sensors|csv]
+    python experiments/identify_right_arm_friction_simple.py [--data_dir DIR] [--acc_source sensors|csv] [--tau_source joint|current] [--no-nonneg]
 
 Outputs:
     fig1: acceleration used vs csv acceleration
@@ -22,17 +34,20 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 from loguru import logger
+from scipy.optimize import lsq_linear
 
 import pinocchio as pin
 from system_identification.utils import find_path, savgol_filter_acceleration
 
 
-def load_data(data_dir, trim_head=1, trim_tail=1):
+def load_data(data_dir, tau_source="joint", trim_head=1, trim_tail=1):
     """Load and align all sensor/command data onto a common time axis."""
     data_dir = Path(data_dir)
     df_q = pd.read_csv(data_dir / "sensors_joint_q.csv")
     df_v = pd.read_csv(data_dir / "sensors_joint_v.csv")
-    df_tau = pd.read_csv(data_dir / "sensor_actual_torque.csv")
+    tau_file = {"joint": "sensors_joint_torque.csv", "current": "sensor_actual_torque.csv"}[tau_source]
+    logger.info(f"Torque source: {tau_source} ({tau_file})")
+    df_tau = pd.read_csv(data_dir / tau_file)
     df_cmd = pd.read_csv(data_dir / "csv_trajectory_a.csv")
 
     t_ref = df_q["time"].values
@@ -102,22 +117,27 @@ def feat_block(feat, N, nj):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Friction-only identification (URDF inertia frozen)")
-    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_101_log_data")
+    parser = argparse.ArgumentParser(description="Full-dynamics identification (inertia + friction + armature + offset)")
+    parser.add_argument("--data_dir", type=str, default="./replay_right_arm_049_log_data")
     parser.add_argument("--robot", type=str, default="marvinM6_right")
     parser.add_argument("--acc_source", type=str, default="csv", choices=["sensors", "csv"])
+    parser.add_argument("--tau_source", type=str, default="joint", choices=["joint", "current"],
+                        help="Torque input: joint=sensors_joint_torque.csv, current=sensor_actual_torque.csv")
     parser.add_argument("--trim_head", type=int, default=1, help="Frames to drop from start")
     parser.add_argument("--trim_tail", type=int, default=1, help="Frames to drop from end")
     parser.add_argument("--savgol_window", type=int, default=21)
     parser.add_argument("--savgol_poly", type=int, default=5)
     parser.add_argument("--vbrk", type=float, default=0.001, help="Coulomb smoothing parameter (vcoul = 2*vbrk)")
+    parser.add_argument("--nonneg", action=argparse.BooleanOptionalAction, default=True,
+                        help="Constrain Fc/Fv/armature >= 0 (inertia and offset unbounded) via bounded lsq_linear. Disable with --no-nonneg")
     parser.add_argument("--save_params", type=str, default="experiments/identified_params_right_arm_friction.npz",
-                        help="Path to save identified friction params NPZ")
+                        help="Path to save identified params NPZ")
     args = parser.parse_args()
 
     # Load + align + trim
     t, q, v, a_fd, tau_meas, a_cmd, a_meas = load_data(
-        args.data_dir, trim_head=args.trim_head, trim_tail=args.trim_tail)
+        args.data_dir, tau_source=args.tau_source,
+        trim_head=args.trim_head, trim_tail=args.trim_tail)
     N, nj = q.shape
     logger.info(f"Loaded {N} samples, {nj} joints from {args.data_dir}")
 
@@ -139,69 +159,86 @@ def main():
             a_label = f"Sensor measured (Savgol w={w} p={p})"
     logger.info(f"Acceleration source: {a_label}")
 
-    # Build pinocchio model — zero out URDF friction/damping so RNEA gives pure rigid-body torque
+    # Build pinocchio model — zero out URDF friction/damping so RNEA gives pure
+    # rigid-body torque, kept as the nominal comparison curve only.
     urdf_file = find_path(f"{args.robot}.urdf", "./robot_description")
     model = pin.buildModelFromUrdf(urdf_file)
     data = model.createData()
-    # Freeze: zero friction and damping so rnea = M(q)*a + C(q,v)*v + g(q) only
     model.friction[:] = 0.0
     model.damping[:] = 0.0
-    logger.info(f"URDF inertia frozen, friction/damping zeroed. Computing nominal RNEA torque...")
+    logger.info(f"Computing URDF nominal RNEA torque (comparison only)...")
 
-    # Compute nominal rigid-body torque (frozen URDF inertia) and the inertia
-    # regressor; the URDF minimal parameter set is recovered analytically by
-    # fitting the regressor to the RNEA output (exact, since URDF params lie
-    # in the span of the minimal parameter set).
+    # Nominal rigid-body torque (frozen URDF inertia) + URDF minimal parameter
+    # set extracted EXACTLY from the model inertias (pinocchio's regressor is
+    # parameterized by these same 10 spatial-inertia params per joint, so
+    # Y·phi_urdf = rnea holds identically — verified by spot-check below).
     tau_rnea = np.zeros((N, nj))
     Y_inertia = np.zeros((N * nj, 10 * nj))
     for i in range(N):
         Y_inertia[i * nj:(i + 1) * nj] = pin.computeJointTorqueRegressor(model, data, q[i], v[i], a[i])
         tau_rnea[i] = pin.rnea(model, data, q[i], v[i], a[i])
-    phi_inertia, _, rank_i, _ = np.linalg.lstsq(Y_inertia, tau_rnea.reshape(-1), rcond=None)
-    fit_err = np.abs(Y_inertia @ phi_inertia - tau_rnea.reshape(-1)).max()
+    phi_inertia = np.concatenate([
+        model.inertias[j].toDynamicParameters() for j in range(1, nj + 1)
+    ])
+    # Spot-check the regressor identity Y·phi_urdf = rnea on a few states
+    check_err = 0.0
+    for i in np.linspace(0, N - 1, min(20, N)).astype(int):
+        Y_chk = pin.computeJointTorqueRegressor(model, data, q[i], v[i], a[i])
+        check_err = max(check_err, float(np.abs(Y_chk @ phi_inertia - tau_rnea[i]).max()))
     logger.info(f"Nominal RNEA torque computed (mean abs: {np.mean(np.abs(tau_rnea)):.4f} N·m)")
-    logger.info(f"URDF minimal inertia params recovered: rank={rank_i}/70, max fit err={fit_err:.2e} N·m")
-
-    # Residual = measured - nominal rigid-body torque
-    tau_resid = tau_meas - tau_rnea
-    tau_resid_flat = tau_resid.reshape(-1)
-    logger.info(f"Residual mean abs: {np.mean(np.abs(tau_resid)):.4f} N·m")
+    logger.info(f"URDF minimal inertia params extracted (frozen): "
+                f"J1~J{nj} mass=[{', '.join(f'{model.inertias[j].mass:.4f}' for j in range(1, nj + 1))}], "
+                f"max spot-check err={check_err:.2e} N·m")
 
     # Build friction regressor: [Fc(nj) | Fv(nj)]
     logger.info("Building friction regressor (Coulomb + viscous)...")
     vcoul = args.vbrk * 2
     tanh_v = np.tanh(v / vcoul)
-    feat_Fc = tanh_v
-    feat_Fv = v
     Y_friction = np.hstack([
-        feat_block(feat_Fc, N, nj),
-        feat_block(feat_Fv, N, nj),
+        feat_block(tanh_v, N, nj),
+        feat_block(v, N, nj),
     ])
 
     # Build armature regressor: [armature(nj)]
     logger.info("Building armature regressor...")
-    feat_arm = a
-    Y_armature = feat_block(feat_arm, N, nj)
+    Y_armature = feat_block(a, N, nj)
 
     # Build torque offset regressor: [offset(nj)]
     logger.info("Building torque offset regressor...")
-    feat_offset = np.ones_like(v)
-    Y_offset = feat_block(feat_offset, N, nj)
+    Y_offset = feat_block(np.ones_like(v), N, nj)
 
-    # Full friction-only regressor
+    # Residual = measured - nominal rigid-body torque (URDF inertia frozen)
+    tau_resid = tau_meas - tau_rnea
+    tau_resid_flat = tau_resid.reshape(-1)
+    logger.info(f"Residual mean abs: {np.mean(np.abs(tau_resid)):.4f} N·m")
+
+    # Friction-only regressor: [Fc(nj) | Fv(nj) | armature(nj) | offset(nj)]
     Y_all = np.hstack([Y_friction, Y_armature, Y_offset])
     n_friction = 2 * nj
     n_armature = nj
     n_offset = nj
     n_params = n_friction + n_armature + n_offset
-    logger.info(f"Regressor shape: {Y_all.shape} ({n_friction} friction + {n_armature} armature + {n_offset} offset = {n_params} params)")
-    logger.info(f"Condition: {np.linalg.cond(Y_all):.2f}")
+    logger.info(f"Regressor shape: {Y_all.shape} ({n_friction} friction + "
+                f"{n_armature} armature + {n_offset} offset = {n_params} params)")
 
-    # Least squares on residual
-    phi, residuals, rank, sv = np.linalg.lstsq(Y_all, tau_resid_flat, rcond=None)
-    logger.info(f"Rank: {rank}/{n_params}, singular values: [{sv.min():.4e}, {sv.max():.4e}]")
+    # Solve: friction/armature/offset against the residual
+    if args.nonneg:
+        # 物理约束解：Fc/Fv/armature >= 0（offset 不限）。armature 列与冻结惯性
+        # 对角项共线，无约束最小二乘会把 URDF 惯性误差记成负 armature；边界约束
+        # 下该误差回到残差，换取参数物理合规。
+        lower = np.full(n_params, -np.inf)
+        lower[:n_friction + n_armature] = 0.0
+        upper = np.full(n_params, np.inf)
+        res = lsq_linear(Y_all, tau_resid_flat, bounds=(lower, upper), method='trf', tol=1e-12)
+        phi = res.x
+        logger.info(f"Nonneg bounded solve: status={res.status}, optimality={res.optimality:.2e}")
+    else:
+        phi, _, rank, sv = np.linalg.lstsq(Y_all, tau_resid_flat, rcond=None)
+        logger.info(f"Rank: {rank}/{n_params}, singular values: [{sv.min():.4e}, {sv.max():.4e}]")
+    resid_cost = float(np.linalg.norm(Y_all @ phi - tau_resid_flat))
+    logger.info(f"||resid||={resid_cost:.4f}")
 
-    # Predict: total = RNEA + friction model
+    # Predict: total = RNEA (frozen URDF) + friction model
     tau_friction_pred = (Y_all @ phi).reshape(N, nj)
     tau_pred = tau_rnea + tau_friction_pred
 
@@ -216,6 +253,14 @@ def main():
         logger.info(f"J{j+1:>4}  | {rms_meas:10.4f} | {rms_rnea_err:12.6f} {rms_rnea_err/rms_meas:7.4f} | "
                     f"{rms_id_err:12.6f} {rms_id_err/rms_meas:7.4f}")
     logger.info("=" * 70)
+
+    # Print frozen inertia params (URDF, not identified)
+    logger.info("--- Inertia (URDF, frozen) ---")
+    for j in range(nj):
+        pi = phi_inertia[j * 10:(j + 1) * 10]
+        mass = pi[0]
+        com = pi[1:4] / mass if abs(mass) > 1e-10 else np.zeros(3)
+        logger.info(f"J{j+1}: Mass={mass:.6f}, CoM=[{com[0]:.6f}, {com[1]:.6f}, {com[2]:.6f}]")
 
     # Print friction params
     logger.info("--- Friction (Coulomb Fc / viscous Fv) ---")
@@ -259,12 +304,15 @@ def main():
         ax.set_ylabel(f"J{j+1}\n(N·m)")
     axes2[0].legend(loc='upper right', fontsize=8)
     axes2[-1].set_xlabel("time (s)")
-    fig2.suptitle("Predicted vs Measured Torque (URDF inertia frozen, friction identified)")
+    fig2.suptitle(f"Predicted vs Measured Torque (URDF inertia frozen, nonneg={args.nonneg})")
 
-    # Save identified parameters — same format as identify_right_arm_simple.py:
-    # phi = [inertia(10*nj) | Fc(nj) | Fv(nj) | armature(nj) | offset(nj)]
-    # Inertia block = URDF minimal parameter set (analytically recovered);
-    # inertia_frozen flag marks that it was not identified from data.
+    # Save identified parameters — same format as identify_right_arm.py so the
+    # C++ TorquePredictor (replay/dyn_comp/collision observer) consumes the
+    # npz through the exact same code path as the full npz.
+    # phi = [inertia(10*nj) | Fc(nj) | Fv(nj) | armature(nj) | offset(nj)];
+    # vbrk = fixed scalar (C++ TorquePredictor broadcasts it to all joints);
+    # inertia_frozen=True marks that the inertia block is the exact URDF
+    # parameter set (not identified from data).
     n_inertia = 10 * nj
     n_params = n_inertia + n_friction + n_armature + n_offset
     phi_full = np.concatenate([phi_inertia, phi])
@@ -282,8 +330,10 @@ def main():
         acc_source=args.acc_source,
         vcoul=2 * args.vbrk,
         inertia_frozen=True,
+        nonneg=bool(args.nonneg),
     )
-    logger.info(f"Saved {n_params} params (inertia = URDF minimal params) to {args.save_params}")
+    logger.info(f"Saved {n_params} params (inertia = exact URDF params, frozen; "
+                f"vbrk = fixed {args.vbrk:.6f}, nonneg={args.nonneg}) to {args.save_params}")
 
     plt.tight_layout()
 
